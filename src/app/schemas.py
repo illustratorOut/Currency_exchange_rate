@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, field_validator, ConfigDict
+from typing import Any
 
 
 class CurrencyResponse(BaseModel):
@@ -7,23 +7,23 @@ class CurrencyResponse(BaseModel):
     value: float
 
 
-class ModifyRequest(BaseModel):
-    rub: Optional[float] = None
-    usd: Optional[float] = None
-    eur: Optional[float] = None
+class CurrencyOperationBase(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    @field_validator('*', mode='before')
+    @classmethod
+    def validate_currency_values(cls, v: Any, info):
+        if not isinstance(v, (int, float)):
+            raise ValueError(f"Некорректное значение для {info.field_name}")
+        return float(v)
 
 
-class SetAmountRequest(BaseModel):
-    rub: Optional[float] = None
-    usd: Optional[float] = None
-    eur: Optional[float] = None
+def create_currency_model():
+    class DynamicCurrencyModel(CurrencyOperationBase):
+        pass
+
+    return DynamicCurrencyModel
 
 
-class ExchangeRatesResponse(BaseModel):
-    rub_usd: float
-    rub_eur: float
-    usd_eur: float
-
-
-class ErrorResponse(BaseModel):
-    detail: str = Field(examples=["Валюта не поддерживается!!!!"])
+ModifyRequest = create_currency_model()
+SetAmountRequest = create_currency_model()

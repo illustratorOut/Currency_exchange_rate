@@ -11,9 +11,6 @@ from src.config.config import settings as app_settings
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Отслеживание валютных курсов")
-    parser.add_argument("--rub", type=float, default=0, help="Начальная сумма в RUB")
-    parser.add_argument("--usd", type=float, default=0, help="Начальная сумма в USD")
-    parser.add_argument("--eur", type=float, default=0, help="Начальная сумма в EUR")
     parser.add_argument("--period", type=int, default=10, help="Период обновления в минутах")
     parser.add_argument(
         "--debug",
@@ -22,7 +19,41 @@ def parse_args():
         default="false",
         help="Режим отладки"
     )
-    return parser.parse_args()
+
+    for currency in app_settings.supported_currencies:
+        parser.add_argument(
+            f"--{currency.lower()}",
+            type=float,
+            nargs='?',
+            const=0.0,
+            default=None,
+            help=f"Начальная сумма в {currency} (по умолчанию 0)"
+        )
+
+    args, unknown = parser.parse_known_args()
+
+    extra_currencies = {}
+    i = 0
+    while i < len(unknown):
+        if unknown[i].startswith('--'):
+            currency_name = unknown[i][2:].upper()
+            if i + 1 >= len(unknown) or unknown[i + 1].startswith('--'):
+                extra_currencies[currency_name] = 0.0
+                app_settings.supported_currencies.append(currency_name)
+                i += 1
+            else:
+                try:
+                    value = float(unknown[i + 1])
+                    extra_currencies[currency_name] = value
+                    app_settings.supported_currencies.append(currency_name)
+                    i += 2
+                except ValueError:
+                    extra_currencies[currency_name] = 0.0
+                    app_settings.supported_currencies.append(currency_name)
+                    i += 1
+        else:
+            i += 1
+    return args, extra_currencies
 
 
 async def cleanup(periodic_task, currency_service):
@@ -39,10 +70,19 @@ async def cleanup(periodic_task, currency_service):
 
 async def run_app():
     """Запуск приложения"""
-    args = parse_args()
+    args, extra_currencies = parse_args()
     debug = args.debug.lower() in ('1', 'true', 'y', 'yes', 'True')
 
-    app_settings.initial_balances = {"RUB": args.rub, "USD": args.usd, "EUR": args.eur}
+    initial_balances = {}
+
+    for currency in app_settings.supported_currencies:
+        arg_value = getattr(args, currency.lower(), None)
+        if arg_value is not None:
+            initial_balances[currency] = arg_value if arg_value is not None else 0.0
+
+    initial_balances.update(extra_currencies)
+
+    app_settings.initial_balances = initial_balances
     app_settings.update_period = args.period
     app_settings.debug = debug
 

@@ -57,9 +57,7 @@ class AppLogger:
                 "Текущие балансы:",
                 *[f"{k.lower()}: {v}" for k, v in data['currencies'].items()],
                 "\nКурсы обмена:",
-                f"rub-usd: {data['rates'].get('rub_usd', 'N/A')}",
-                f"rub-eur: {data['rates'].get('rub_eur', 'N/A')}",
-                f"usd-eur: {data['rates'].get('usd_eur', 'N/A')}",
+                *[f"{rate.replace('_', '-'):<10}: {value}" for rate, value in data['rates'].items()],
                 "\nОбщие суммы:",
                 f"sum: {' / '.join(f'{v:.2f} {k.lower()}' for k, v in data['totals'].items())}"
             ]
@@ -69,22 +67,17 @@ class AppLogger:
             self.error(f"Ошибка при регистрации валютных данных: {str(e)}")
             raise
 
-    def log_currency_update(self, rates: dict):
-        """Логирование обновления курсов валют"""
+    def log_currency_update(rates):
         if not rates:
-            self.warning("Получены пустые курсы валют")
+            logger.warning("Нет данных о курсах валют")
             return
 
-        try:
-            output = [
-                "Обновленные курсы:",
-                f"rub-usd: {rates.get('USD', 'N/A')}",
-                f"rub-eur: {rates.get('EUR', 'N/A')}",
-                f"usd-eur: {rates.get('EUR', 1) / rates.get('USD', 1) if rates.get('USD') else 'N/A'}"
-            ]
-            self.info("\n".join(output))
-        except Exception as e:
-            self.error(f"Ошибка при регистрации обновления курсов: {str(e)}")
+        rates_str = "\n".join(
+            f"{pair}: {rate if rate != 0 else 'N/A'}"
+            for pair, rate in sorted(rates.items())
+        )
+
+        logger.info(f"Обновленные курсы:\n{rates_str}")
 
     def debug(self, msg: str, *args, **kwargs) -> None:
         self.logger.debug(msg, *args, **kwargs)
