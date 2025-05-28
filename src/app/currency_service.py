@@ -1,4 +1,5 @@
 import asyncio
+import time
 import httpx
 
 from abc import ABC, abstractmethod
@@ -29,9 +30,22 @@ class CurrencyService(BaseCurrencyService):
         self.client = httpx.AsyncClient()
         self._stop_event = asyncio.Event()
         self._update_task = None
+        self._last_error = None
+        self._initial_rates_loaded = False
+
+    def _safe_divide(self, a: float, b: float) -> float:
+        """Безопасное деление на ноль"""
+        try:
+            return round(a / b, 1) if b != 0 else 0.0
+        except Exception as e:
+            logger.warning(f"Ошибка деления {a}/{b}: {str(e)}")
+            return 0.0
 
     async def get_exchange_rates(self) -> Dict[str, float]:
         try:
+            if self._last_error and time.time() - self._last_error[0] < 60:
+                return {}
+
             response = await self.client.get(settings.api_url)
             data = response.json()
 
@@ -47,7 +61,9 @@ class CurrencyService(BaseCurrencyService):
 
             return rates
         except Exception as e:
-            logger.error(f"Не удалось получить курсы обмена валют: {e}")
+            if str(e) != getattr(self._last_error, '1', ''):
+                logger.error(f"Не удалось получить курсы обмена валют: {e}")
+                self._last_error = (time.time(), str(e))
             return {curr: 0.0 for curr in settings.supported_currencies}
 
     async def update_balances(self, silent: bool = False):
@@ -121,12 +137,9 @@ class CurrencyService(BaseCurrencyService):
     async def get_total_amounts(self) -> dict:
         """Возвращает текущие балансы с проверкой на валидность"""
         try:
-            if not self.exchange_rates:
+            if not self._initial_rates_loaded:
                 await self.update_balances(silent=True)
-
-            for currency in settings.supported_currencies:
-                if currency not in self.balances:
-                    raise ValueError(f"Валюта {currency} не инициализирована")
+                self._initial_rates_loaded = True
 
             rates = {}
             currencies = settings.supported_currencies
@@ -141,9 +154,9 @@ class CurrencyService(BaseCurrencyService):
                     if currency_from == base_currency:
                         rate = base_rates[currency_to]
                     elif currency_to == base_currency:
-                        rate = 1 / base_rates[currency_from]
+                        rate = self._safe_divide(1, base_rates[currency_from])
                     else:
-                        rate = base_rates[currency_to] / base_rates[currency_from]
+                        rate = self._safe_divide(base_rates[currency_to], base_rates[currency_from])
 
                     rates[f"{currency_from.lower()}_{currency_to.lower()}"] = rate
 
@@ -180,14 +193,12 @@ class CurrencyService(BaseCurrencyService):
                     total += balance.amount
                 else:
                     if currency == base_currency:
-                        rate = 1 / self.exchange_rates.get(target_currency, 0.0) if self.exchange_rates.get(
-                            target_currency, 0.0) != 0 else 0.0
+                        rate = self._safe_divide(1, self.exchange_rates.get(target_currency, 0.0))
                     elif target_currency == base_currency:
                         rate = self.exchange_rates.get(currency, 0.0)
                     else:
                         rate_to_base = self.exchange_rates.get(currency, 0.0)
-                        rate_from_base = 1 / self.exchange_rates.get(target_currency, 0.0) if self.exchange_rates.get(
-                            target_currency, 0.0) != 0 else 0.0
+                        rate_from_base = self._safe_divide(1, self.exchange_rates.get(target_currency, 0.0))
                         rate = rate_to_base * rate_from_base
 
                     total += balance.amount * rate
@@ -195,6 +206,10 @@ class CurrencyService(BaseCurrencyService):
         return totals
 
     async def start(self):
+        self.exchange_rates = await self.get_exchange_rates()
+        if not any(v > 0 for v in self.exchange_rates.values()):
+            raise RuntimeError("Не удалось загрузить начальные курсы валют")
+        self._initial_rates_loaded = True
         self._update_task = asyncio.create_task(self._periodic_update())
 
     async def get_formatted_amounts(self) -> str:
